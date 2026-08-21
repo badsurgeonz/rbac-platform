@@ -3,22 +3,31 @@ package com.example.rbac.permission;
 import com.example.rbac.common.ApiResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Set;
+import java.time.Duration;
 
 @RestController
 @RequestMapping("/permissions")
 public class PermissionController {
     private final JdbcTemplate jdbc;
+    private final StringRedisTemplate redis;
+    private final PermissionEventPublisher eventPublisher;
 
-    public PermissionController(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    public PermissionController(JdbcTemplate jdbc, StringRedisTemplate redis, PermissionEventPublisher eventPublisher) {
+        this.jdbc = jdbc; this.redis = redis; this.eventPublisher = eventPublisher;
+    }
 
     @GetMapping("/users/{userId}")
     public ApiResponse<Set<String>> permissions(@PathVariable Long userId) {
+        String key = cacheKey(userId);
+        String cached = redis.opsForValue().get(key);
+        if (cached != null) return ApiResponse.ok(cached.isBlank() ? Set.of() : Set.of(cached.split(",")));
         List<String> result = jdbc.queryForList("""
                 WITH RECURSIVE role_tree AS (
                     SELECT r.id, r.parent_id FROM sys_role r JOIN sys_user_role ur ON ur.role_id = r.id WHERE ur.user_id = ?
@@ -28,7 +37,9 @@ public class PermissionController {
                 SELECT DISTINCT p.code FROM role_tree rt JOIN sys_role_permission rp ON rp.role_id = rt.id
                 JOIN sys_permission p ON p.id = rp.permission_id WHERE p.status = 1
                 """, String.class, userId);
-        return ApiResponse.ok(Set.copyOf(result));
+        Set<String> permissions = Set.copyOf(result);
+        redis.opsForValue().set(key, String.join(",", permissions), Duration.ofMinutes(10));
+        return ApiResponse.ok(permissions);
     }
 
     @GetMapping("/roles")
@@ -48,6 +59,7 @@ public class PermissionController {
         validateRoleConflicts(roleIds);
         jdbc.update("DELETE FROM sys_user_role WHERE user_id = ?", userId);
         roleIds.forEach(roleId -> jdbc.update("INSERT INTO sys_user_role(user_id, role_id) VALUES (?, ?)", userId, roleId));
+        evictUser(userId); eventPublisher.publish(new PermissionEvent(userId, "USER_ROLES_REPLACED", "USER", userId));
         return ApiResponse.ok(null);
     }
 
@@ -62,6 +74,7 @@ public class PermissionController {
             }
             jdbc.update("INSERT INTO sys_role_permission(role_id, permission_id) VALUES (?, ?)", roleId, permissionId);
         });
+        publishRoleChange(roleId, "ROLE_PERMISSIONS_REPLACED");
         return ApiResponse.ok(null);
     }
 
@@ -73,6 +86,7 @@ public class PermissionController {
         conflictRoleIds.forEach(this::ensureRoleExists);
         jdbc.update("DELETE FROM sys_role_conflict WHERE role_id = ?", roleId);
         conflictRoleIds.forEach(conflictId -> jdbc.update("INSERT INTO sys_role_conflict(role_id, conflict_role_id) VALUES (?, ?)", roleId, conflictId));
+        eventPublisher.publish(new PermissionEvent(null, "ROLE_CONFLICTS_REPLACED", "ROLE", roleId));
         return ApiResponse.ok(null);
     }
 
@@ -85,6 +99,7 @@ public class PermissionController {
             if (roleId.equals(request.parentId()) || reaches(request.parentId(), roleId)) throw new IllegalArgumentException("角色继承关系会形成环");
         }
         jdbc.update("UPDATE sys_role SET parent_id = ? WHERE id = ?", request.parentId(), roleId);
+        publishRoleChange(roleId, "ROLE_PARENT_CHANGED");
         return ApiResponse.ok(null);
     }
 
@@ -117,6 +132,12 @@ public class PermissionController {
 
     private void ensureUserExists(Long id) { if (jdbc.queryForObject("SELECT COUNT(*) FROM sys_user WHERE id = ?", Integer.class, id) == 0) throw new IllegalArgumentException("用户不存在: " + id); }
     private void ensureRoleExists(Long id) { if (jdbc.queryForObject("SELECT COUNT(*) FROM sys_role WHERE id = ? AND status = 1", Integer.class, id) == 0) throw new IllegalArgumentException("角色不存在: " + id); }
+    private String cacheKey(Long userId) { return "rbac:permission:user:" + userId; }
+    private void evictUser(Long userId) { redis.delete(cacheKey(userId)); }
+    private void publishRoleChange(Long roleId, String action) {
+        jdbc.queryForList("SELECT DISTINCT ur.user_id FROM sys_user_role ur WHERE ur.role_id = ?", Long.class, roleId).forEach(this::evictUser);
+        eventPublisher.publish(new PermissionEvent(null, action, "ROLE", roleId));
+    }
     private String placeholders(int count) { return String.join(",", java.util.Collections.nCopies(count, "?")); }
     private Object[] arguments(Set<Long> first, Set<Long> second) { return java.util.stream.Stream.concat(first.stream(), second.stream()).toArray(); }
 
