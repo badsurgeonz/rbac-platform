@@ -1,0 +1,34 @@
+package com.example.rbac.common;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.Date;
+import java.util.Map;
+
+@Service
+public class JwtTokenService {
+    private final SecretKey key;
+    private final long accessSeconds;
+    public JwtTokenService(@Value("${security.jwt.secret:change-me-change-me-change-me-32}") String secret,
+                           @Value("${security.jwt.access-seconds:900}") long accessSeconds) {
+        this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8)); this.accessSeconds = accessSeconds;
+    }
+    public String accessToken(Long userId, String username, String device, java.util.Collection<String> permissions) {
+        Instant now = Instant.now();
+        return Jwts.builder().id(java.util.UUID.randomUUID().toString()).subject(String.valueOf(userId)).claim("username", username).claim("device", device)
+                .claim("permissions", permissions).issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(accessSeconds)))
+                .signWith(key).compact();
+    }
+    public String refreshToken(Long userId, String device, String jti) {
+        return Jwts.builder().subject(String.valueOf(userId)).claim("device", device).claim("type", "refresh").id(jti)
+                .issuedAt(new Date()).expiration(new Date(System.currentTimeMillis() + 7 * 86400000L)).signWith(key).compact();
+    }
+    public Claims parse(String token) { return Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload(); }
+}
