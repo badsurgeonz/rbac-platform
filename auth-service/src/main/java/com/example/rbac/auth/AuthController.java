@@ -8,6 +8,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
+import com.alibaba.csp.sentinel.annotation.SentinelResource;
 
 import java.time.Duration;
 import java.util.List;
@@ -27,12 +28,20 @@ public class AuthController {
     }
 
     @PostMapping("/login")
+    @SentinelResource("auth:login")
     public ApiResponse<Map<String, String>> login(@Valid @RequestBody LoginRequest req,
-                                                  @RequestHeader(value = "X-Device-Id", defaultValue = "web") String device) {
+                                                  @RequestHeader(value = "X-Device-Id", defaultValue = "web") String device,
+                                                  @RequestHeader(value = "X-Forwarded-For", defaultValue = "unknown") String clientIp) {
+        String failureKey = "auth:login:fail:" + clientIp + ":" + req.username();
+        String failures = redis.opsForValue().get(failureKey);
+        if (failures != null && Integer.parseInt(failures) >= 5) return ApiResponse.fail(429, "登录失败次数过多，请稍后重试");
         UserAccount user = findByUsername(req.username());
         if (user == null || user.status() != 1 || !passwordEncoder.matches(req.password(), user.passwordHash())) {
+            Long count = redis.opsForValue().increment(failureKey);
+            if (count != null && count == 1) redis.expire(failureKey, Duration.ofMinutes(10));
             return ApiResponse.fail(401, "用户名或密码错误");
         }
+        redis.delete(failureKey);
         return issueTokens(user, device);
     }
 

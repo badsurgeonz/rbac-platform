@@ -12,6 +12,8 @@ rbac-platform/
 ├── docker-compose.yml   # MySQL、Redis、RabbitMQ、Sentinel 控制台
 └── docs/
     ├── architecture.md # 详细架构设计
+    ├── business-closure.md # 业务闭环设计与开发演进
+    └── pitfalls.md      # 开发过程中的问题与解决方案
 ```
 
 ## 启动

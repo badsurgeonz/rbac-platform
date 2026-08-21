@@ -12,3 +12,5 @@ spring:
         - id: permission
           uri: http://localhost:9002
           predicates: [ Path=/permissions/** ]
+security.jwt.issuer: ${JWT_ISSUER:rbac-platform}
+security.jwt.audience: ${JWT_AUDIENCE:rbac-api}

@@ -4,9 +4,13 @@ import com.example.rbac.common.ApiResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import io.jsonwebtoken.JwtException;
 
 @RestControllerAdvice
 public class AuthExceptionHandler {
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ApiResponse<Void> validation(MethodArgumentNotValidException exception) { return ApiResponse.fail(400, "请求参数不合法"); }
+
+    @ExceptionHandler(JwtException.class)
+    public ApiResponse<Void> jwt(JwtException exception) { return ApiResponse.fail(401, "Token 无效或已过期"); }
 }

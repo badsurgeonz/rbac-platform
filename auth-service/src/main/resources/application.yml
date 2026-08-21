@@ -16,3 +16,5 @@ spring:
     username: ${RABBITMQ_USER:guest}
     password: ${RABBITMQ_PASSWORD:guest}
 security.jwt.secret: ${JWT_SECRET:change-me-change-me-change-me-32}
+security.jwt.issuer: ${JWT_ISSUER:rbac-platform}
+security.jwt.audience: ${JWT_AUDIENCE:rbac-api}
