@@ -24,4 +24,4 @@ mvn -pl permission-service spring-boot:run
 mvn -pl gateway-service spring-boot:run
 ```
 
-默认测试账号：`admin / admin123`。生产环境必须通过环境变量覆盖 JWT 密钥、数据库密码和 RabbitMQ 凭证。
+默认测试账号：`admin / password`。生产环境必须通过环境变量覆盖 JWT 密钥、数据库密码和 RabbitMQ 凭证，并替换默认 BCrypt 密码。

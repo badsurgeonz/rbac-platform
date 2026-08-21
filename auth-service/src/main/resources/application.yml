@@ -1,6 +1,18 @@
 server: { port: 9001 }
 spring:
   application.name: auth-service
-  data.redis: { host: ${REDIS_HOST:localhost}, port: ${REDIS_PORT:6379} }
-  rabbitmq: { host: ${RABBITMQ_HOST:localhost}, port: 5672, username: guest, password: guest }
+  datasource:
+    url: "jdbc:mysql://${MYSQL_HOST:localhost}:3306/rbac?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8"
+    username: ${MYSQL_USER:rbac}
+    password: ${MYSQL_PASSWORD:rbac123}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: 5672
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
 security.jwt.secret: ${JWT_SECRET:change-me-change-me-change-me-32}
