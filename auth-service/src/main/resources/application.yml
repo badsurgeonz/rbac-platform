@@ -1,6 +1,21 @@
 server: { port: 9001 }
 spring:
   application.name: auth-service
+  config:
+    import: "optional:nacos:application.yml?group=DEFAULT_GROUP&refreshEnabled=true,optional:nacos:auth-service.yml?group=DEFAULT_GROUP&refreshEnabled=true"
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+        group: ${NACOS_GROUP:DEFAULT_GROUP}
+        namespace: ${NACOS_NAMESPACE:}
+        ephemeral: false
+      config:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+        group: ${NACOS_GROUP:DEFAULT_GROUP}
+        namespace: ${NACOS_NAMESPACE:}
+        file-extension: yaml
+        refresh-enabled: true
   datasource:
     url: "jdbc:mysql://${MYSQL_HOST:localhost}:3306/rbac?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8"
     username: ${MYSQL_USER:rbac}
@@ -15,6 +30,9 @@ spring:
     port: 5672
     username: ${RABBITMQ_USER:guest}
     password: ${RABBITMQ_PASSWORD:guest}
-security.jwt.secret: ${JWT_SECRET:change-me-change-me-change-me-32}
+security.jwt.secret: ${JWT_SECRET}
 security.jwt.issuer: ${JWT_ISSUER:rbac-platform}
 security.jwt.audience: ${JWT_AUDIENCE:rbac-api}
+security.jwt.refresh-seconds: ${JWT_REFRESH_SECONDS:604800}
+security.internal.secret: ${INTERNAL_REQUEST_SECRET}
+security.internal.timestamp-skew-seconds: ${INTERNAL_REQUEST_TIMESTAMP_SKEW_SECONDS:30}

@@ -3,14 +3,34 @@ server:
 spring:
   application:
     name: gateway-service
+  config:
+    import: "optional:nacos:application.yml?group=DEFAULT_GROUP&refreshEnabled=true,optional:nacos:gateway-service.yml?group=DEFAULT_GROUP&refreshEnabled=true"
   cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+        group: ${NACOS_GROUP:DEFAULT_GROUP}
+        namespace: ${NACOS_NAMESPACE:}
+        ephemeral: false
+      config:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+        group: ${NACOS_GROUP:DEFAULT_GROUP}
+        namespace: ${NACOS_NAMESPACE:}
+        file-extension: yaml
+        refresh-enabled: true
     gateway:
       routes:
         - id: auth
-          uri: http://localhost:9001
+          uri: lb://auth-service
           predicates: [ Path=/auth/** ]
         - id: permission
-          uri: http://localhost:9002
+          uri: lb://permission-service
           predicates: [ Path=/permissions/** ]
+          metadata:
+            required-permission: permission:read
+            write-methods: PUT,POST,DELETE
 security.jwt.issuer: ${JWT_ISSUER:rbac-platform}
 security.jwt.audience: ${JWT_AUDIENCE:rbac-api}
+security.jwt.secret: ${JWT_SECRET}
+security.internal.secret: ${INTERNAL_REQUEST_SECRET}
+security.internal.timestamp-skew-seconds: ${INTERNAL_REQUEST_TIMESTAMP_SKEW_SECONDS:30}

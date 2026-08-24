@@ -7,7 +7,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class JwtTokenServiceTest {
-    private final JwtTokenService service = new JwtTokenService("test-secret-test-secret-test-secret-32", 900, "test-issuer", "test-audience");
+    private final JwtTokenService service = new JwtTokenService("test-secret-test-secret-test-secret-32", 900, 604800, "test-issuer", "test-audience");
 
     @Test
     void accessTokenContainsIdentityAndType() {
@@ -27,7 +27,7 @@ class JwtTokenServiceTest {
 
     @Test
     void tokenWithWrongIssuerCannotBeParsed() {
-        JwtTokenService other = new JwtTokenService("test-secret-test-secret-test-secret-32", 900, "other", "test-audience");
+        JwtTokenService other = new JwtTokenService("test-secret-test-secret-test-secret-32", 900, 604800, "other", "test-audience");
         String token = other.accessToken(7L, "alice", "web", List.of());
         assertThrows(Exception.class, () -> service.parse(token));
     }

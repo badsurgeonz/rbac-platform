@@ -5,6 +5,7 @@ import com.example.rbac.common.JwtTokenService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
@@ -13,6 +14,8 @@ import com.alibaba.csp.sentinel.annotation.SentinelResource;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.HashSet;
 import java.util.UUID;
 
 @RestController
@@ -22,6 +25,16 @@ public class AuthController {
     private final StringRedisTemplate redis;
     private final JdbcTemplate jdbc;
     private final PasswordEncoder passwordEncoder;
+    private static final Duration REFRESH_TTL = Duration.ofDays(7);
+    private static final DefaultRedisScript<Long> ROTATE_REFRESH = new DefaultRedisScript<>("""
+            local current = redis.call('GET', KEYS[1])
+            if current ~= ARGV[1] then return 0 end
+            redis.call('DEL', KEYS[1])
+            redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
+            redis.call('SET', KEYS[3], '1', 'EX', ARGV[3])
+            redis.call('SET', KEYS[4], ARGV[4], 'EX', ARGV[3])
+            return 1
+            """, Long.class);
 
     public AuthController(JwtTokenService jwt, StringRedisTemplate redis, JdbcTemplate jdbc, PasswordEncoder passwordEncoder) {
         this.jwt = jwt; this.redis = redis; this.jdbc = jdbc; this.passwordEncoder = passwordEncoder;
@@ -70,24 +83,31 @@ public class AuthController {
             if (user == null || user.status() != 1) return ApiResponse.fail(401, "用户不可用");
             String device = session[2];
             String newJti = UUID.randomUUID().toString();
-            String access = jwt.accessToken(user.id(), user.username(), device, defaultPermissions());
+            Set<String> permissions = resolvePermissions(user.id());
+            String access = jwt.accessToken(user.id(), user.username(), device, permissions);
             String refresh = jwt.refreshToken(user.id(), device, newJti);
-            redis.opsForValue().set("auth:black:" + oldJti, "1", Duration.ofDays(7));
-            redis.delete("auth:refresh:" + oldJti);
-            redis.opsForValue().set("auth:refresh:" + newJti, user.id() + ":1:" + device, Duration.ofDays(7));
+            String newSession = jwt.parse(access).getId() + "|" + newJti;
+            Long rotated = redis.execute(ROTATE_REFRESH,
+                    List.of("auth:refresh:" + oldJti, "auth:refresh:" + newJti,
+                            "auth:black:" + oldJti, "auth:session:" + user.id() + ":" + device),
+                    sessionData, user.id() + ":1:" + device, String.valueOf(REFRESH_TTL.toSeconds()), newSession);
+            if (!Long.valueOf(1).equals(rotated)) {
+                revokeDeviceSession(user.id(), device);
+                return ApiResponse.fail(401, "Refresh Token 已重放，会话已撤销");
+            }
             return ApiResponse.ok(Map.of("accessToken", access, "refreshToken", refresh, "expiresIn", "900"));
         } catch (Exception e) { return ApiResponse.fail(401, "Refresh Token 无效或已过期"); }
     }
 
     private ApiResponse<Map<String, String>> issueTokens(UserAccount user, String device) {
         String refreshJti = UUID.randomUUID().toString();
-        String access = jwt.accessToken(user.id(), user.username(), device, defaultPermissions());
+        String access = jwt.accessToken(user.id(), user.username(), device, resolvePermissions(user.id()));
         String refresh = jwt.refreshToken(user.id(), device, refreshJti);
         String sessionKey = "auth:session:" + user.id() + ":" + device;
         String old = redis.opsForValue().get(sessionKey);
         if (old != null) for (String oldJti : old.split("\\|")) redis.opsForValue().set("auth:black:" + oldJti, "1", Duration.ofDays(7));
         redis.opsForValue().set(sessionKey, jwt.parse(access).getId() + "|" + refreshJti, Duration.ofDays(7));
-        redis.opsForValue().set("auth:refresh:" + refreshJti, user.id() + ":1:" + device, Duration.ofDays(7));
+        redis.opsForValue().set("auth:refresh:" + refreshJti, user.id() + ":1:" + device, REFRESH_TTL);
         return ApiResponse.ok(Map.of("accessToken", access, "refreshToken", refresh, "expiresIn", "900"));
     }
 
@@ -105,7 +125,32 @@ public class AuthController {
         return (rs, rowNum) -> new UserAccount(rs.getLong("id"), rs.getString("username"), rs.getString("password_hash"), rs.getInt("status"));
     }
 
-    private List<String> defaultPermissions() { return List.of("user:read", "role:read", "audit:read", "permission:read", "permission:write"); }
+    private Set<String> resolvePermissions(Long userId) {
+        return new HashSet<>(jdbc.queryForList("""
+                WITH RECURSIVE role_tree AS (
+                    SELECT r.id, r.parent_id FROM sys_role r
+                    JOIN sys_user_role ur ON ur.role_id = r.id WHERE ur.user_id = ?
+                    UNION ALL
+                    SELECT parent.id, parent.parent_id FROM sys_role parent
+                    JOIN role_tree child ON child.parent_id = parent.id
+                )
+                SELECT DISTINCT p.code FROM role_tree rt
+                JOIN sys_role_permission rp ON rp.role_id = rt.id
+                JOIN sys_permission p ON p.id = rp.permission_id
+                WHERE p.status = 1
+                """, String.class, userId));
+    }
+
+    private void revokeDeviceSession(Long userId, String device) {
+        String sessionKey = "auth:session:" + userId + ":" + device;
+        String session = redis.opsForValue().get(sessionKey);
+        if (session != null) {
+            for (String jti : session.split("\\|")) {
+                redis.opsForValue().set("auth:black:" + jti, "1", REFRESH_TTL);
+            }
+        }
+        redis.delete(sessionKey);
+    }
 
     record UserAccount(Long id, String username, String passwordHash, int status) {}
     public record LoginRequest(@NotBlank String username, @NotBlank String password) {}

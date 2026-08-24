@@ -16,13 +16,15 @@ import java.util.Map;
 public class JwtTokenService {
     private final SecretKey key;
     private final long accessSeconds;
+    private final long refreshSeconds;
     private final String issuer;
     private final String audience;
     public JwtTokenService(@Value("${security.jwt.secret:change-me-change-me-change-me-32}") String secret,
                            @Value("${security.jwt.access-seconds:900}") long accessSeconds,
+                           @Value("${security.jwt.refresh-seconds:604800}") long refreshSeconds,
                            @Value("${security.jwt.issuer:rbac-platform}") String issuer,
                            @Value("${security.jwt.audience:rbac-api}") String audience) {
-        this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8)); this.accessSeconds = accessSeconds; this.issuer = issuer; this.audience = audience;
+        this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8)); this.accessSeconds = accessSeconds; this.refreshSeconds = refreshSeconds; this.issuer = issuer; this.audience = audience;
     }
     public String accessToken(Long userId, String username, String device, java.util.Collection<String> permissions) {
         Instant now = Instant.now();
@@ -32,7 +34,7 @@ public class JwtTokenService {
     }
     public String refreshToken(Long userId, String device, String jti) {
         return Jwts.builder().id(jti).issuer(issuer).audience().add(audience).and().subject(String.valueOf(userId)).claim("device", device).claim("type", "refresh")
-                .issuedAt(new Date()).expiration(new Date(System.currentTimeMillis() + 7 * 86400000L)).signWith(key).compact();
+                .issuedAt(new Date()).expiration(new Date(System.currentTimeMillis() + refreshSeconds * 1000L)).signWith(key).compact();
     }
     public Claims parse(String token) { return Jwts.parser().verifyWith(key).requireIssuer(issuer).requireAudience(audience).build().parseSignedClaims(token).getPayload(); }
 }
