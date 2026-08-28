@@ -15,7 +15,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.HashSet;
 import java.util.UUID;
 
 @RestController
@@ -25,6 +24,7 @@ public class AuthController {
     private final StringRedisTemplate redis;
     private final JdbcTemplate jdbc;
     private final PasswordEncoder passwordEncoder;
+    private final PermissionClient permissionClient;
     private static final Duration REFRESH_TTL = Duration.ofDays(7);
     private static final DefaultRedisScript<Long> ROTATE_REFRESH = new DefaultRedisScript<>("""
             local current = redis.call('GET', KEYS[1])
@@ -36,8 +36,9 @@ public class AuthController {
             return 1
             """, Long.class);
 
-    public AuthController(JwtTokenService jwt, StringRedisTemplate redis, JdbcTemplate jdbc, PasswordEncoder passwordEncoder) {
-        this.jwt = jwt; this.redis = redis; this.jdbc = jdbc; this.passwordEncoder = passwordEncoder;
+    public AuthController(JwtTokenService jwt, StringRedisTemplate redis, JdbcTemplate jdbc, PasswordEncoder passwordEncoder,
+                          PermissionClient permissionClient) {
+        this.jwt = jwt; this.redis = redis; this.jdbc = jdbc; this.passwordEncoder = passwordEncoder; this.permissionClient = permissionClient;
     }
 
     @PostMapping("/login")
@@ -84,7 +85,7 @@ public class AuthController {
             String device = session[2];
             String newJti = UUID.randomUUID().toString();
             Set<String> permissions = resolvePermissions(user.id());
-            String access = jwt.accessToken(user.id(), user.username(), device, permissions);
+            String access = jwt.accessToken(user.id(), user.username(), device, permissions, authVersion(user.id()));
             String refresh = jwt.refreshToken(user.id(), device, newJti);
             String newSession = jwt.parse(access).getId() + "|" + newJti;
             Long rotated = redis.execute(ROTATE_REFRESH,
@@ -101,7 +102,7 @@ public class AuthController {
 
     private ApiResponse<Map<String, String>> issueTokens(UserAccount user, String device) {
         String refreshJti = UUID.randomUUID().toString();
-        String access = jwt.accessToken(user.id(), user.username(), device, resolvePermissions(user.id()));
+        String access = jwt.accessToken(user.id(), user.username(), device, resolvePermissions(user.id()), authVersion(user.id()));
         String refresh = jwt.refreshToken(user.id(), device, refreshJti);
         String sessionKey = "auth:session:" + user.id() + ":" + device;
         String old = redis.opsForValue().get(sessionKey);
@@ -126,19 +127,7 @@ public class AuthController {
     }
 
     private Set<String> resolvePermissions(Long userId) {
-        return new HashSet<>(jdbc.queryForList("""
-                WITH RECURSIVE role_tree AS (
-                    SELECT r.id, r.parent_id FROM sys_role r
-                    JOIN sys_user_role ur ON ur.role_id = r.id WHERE ur.user_id = ?
-                    UNION ALL
-                    SELECT parent.id, parent.parent_id FROM sys_role parent
-                    JOIN role_tree child ON child.parent_id = parent.id
-                )
-                SELECT DISTINCT p.code FROM role_tree rt
-                JOIN sys_role_permission rp ON rp.role_id = rt.id
-                JOIN sys_permission p ON p.id = rp.permission_id
-                WHERE p.status = 1
-                """, String.class, userId));
+        return permissionClient.permissions(userId);
     }
 
     private void revokeDeviceSession(Long userId, String device) {
@@ -152,7 +141,61 @@ public class AuthController {
         redis.delete(sessionKey);
     }
 
+    private long authVersion(Long userId) {
+        String value = redis.opsForValue().get("auth:user-version:" + userId);
+        if (value == null) {
+            redis.opsForValue().setIfAbsent("auth:user-version:" + userId, "1");
+            return 1L;
+        }
+        return Long.parseLong(value);
+    }
+
+    @PostMapping("/password")
+    public ApiResponse<Void> changePassword(@RequestHeader("X-User-Id") Long userId,
+                                             @Valid @RequestBody ChangePasswordRequest request) {
+        UserAccount user = findById(userId);
+        if (user == null || !passwordEncoder.matches(request.currentPassword(), user.passwordHash())) {
+            return ApiResponse.fail(401, "当前密码错误");
+        }
+        jdbc.update("UPDATE sys_user SET password_hash = ? WHERE id = ?", passwordEncoder.encode(request.newPassword()), userId);
+        revokeUserSessions(userId);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/internal/users")
+    public ApiResponse<List<UserView>> internalUsers() {
+        return ApiResponse.ok(jdbc.query("SELECT id, username, status, created_at FROM sys_user ORDER BY id DESC LIMIT 200",
+                (rs, rowNum) -> new UserView(rs.getLong("id"), rs.getString("username"), rs.getInt("status"), rs.getTimestamp("created_at").toInstant())));
+    }
+
+    @PutMapping("/internal/users/{userId}/status")
+    public ApiResponse<Void> internalStatus(@PathVariable Long userId, @RequestBody StatusRequest request) {
+        if (request.status() != 0 && request.status() != 1) throw new IllegalArgumentException("用户状态必须为 0 或 1");
+        if (jdbc.update("UPDATE sys_user SET status = ? WHERE id = ?", request.status(), userId) == 0) throw new IllegalArgumentException("用户不存在");
+        revokeUserSessions(userId);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/internal/users/{userId}/sessions")
+    public ApiResponse<Void> internalRevokeSessions(@PathVariable Long userId) {
+        revokeUserSessions(userId);
+        return ApiResponse.ok(null);
+    }
+
+    private void revokeUserSessions(Long userId) {
+        var keys = redis.keys("auth:session:" + userId + ":*");
+        if (keys != null) for (String key : keys) {
+            String value = redis.opsForValue().get(key);
+            if (value != null) for (String jti : value.split("\\|")) redis.opsForValue().set("auth:black:" + jti, "1", REFRESH_TTL);
+            redis.delete(key);
+        }
+        redis.opsForValue().increment("auth:user-version:" + userId);
+    }
+
     record UserAccount(Long id, String username, String passwordHash, int status) {}
     public record LoginRequest(@NotBlank String username, @NotBlank String password) {}
     public record RefreshRequest(@NotBlank String refreshToken) {}
+    public record ChangePasswordRequest(@NotBlank String currentPassword, @NotBlank String newPassword) {}
+    public record StatusRequest(int status) {}
+    public record UserView(Long id, String username, int status, java.time.Instant createdAt) {}
 }

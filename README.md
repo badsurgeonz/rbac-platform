@@ -27,3 +27,5 @@ mvn -pl gateway-service spring-boot:run
 ```
 
 默认测试账号：`admin / password`。生产环境必须通过环境变量覆盖 JWT 密钥、数据库密码和 RabbitMQ 凭证，并替换默认 BCrypt 密码。
+
+认证链路还要求设置 `JWT_SECRET` 和 `INTERNAL_REQUEST_SECRET`；两者必须使用高强度随机值，且 `INTERNAL_REQUEST_SECRET` 只能由 Gateway 与下游服务共享，不能暴露给客户端。

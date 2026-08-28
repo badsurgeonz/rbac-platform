@@ -6,10 +6,18 @@ CREATE TABLE sys_permission (id BIGINT PRIMARY KEY AUTO_INCREMENT, code VARCHAR(
 CREATE TABLE sys_user_role (user_id BIGINT NOT NULL, role_id BIGINT NOT NULL, PRIMARY KEY(user_id,role_id));
 CREATE TABLE sys_role_permission (role_id BIGINT NOT NULL, permission_id BIGINT NOT NULL, PRIMARY KEY(role_id,permission_id));
 CREATE TABLE sys_role_conflict (role_id BIGINT NOT NULL, conflict_role_id BIGINT NOT NULL, PRIMARY KEY(role_id,conflict_role_id));
-CREATE TABLE sys_audit_log (id BIGINT PRIMARY KEY AUTO_INCREMENT, user_id BIGINT, event_type VARCHAR(32) NOT NULL, detail JSON, ip VARCHAR(64), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, INDEX idx_audit_user(user_id));
+CREATE TABLE sys_audit_log (id BIGINT PRIMARY KEY AUTO_INCREMENT, event_id CHAR(36) UNIQUE, user_id BIGINT, event_type VARCHAR(64) NOT NULL, detail JSON, ip VARCHAR(64), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, INDEX idx_audit_user(user_id));
+CREATE TABLE sys_outbox_event (id BIGINT PRIMARY KEY AUTO_INCREMENT, event_id CHAR(36) UNIQUE NOT NULL, event_type VARCHAR(64) NOT NULL, routing_key VARCHAR(128) NOT NULL, payload JSON NOT NULL, status VARCHAR(16) NOT NULL DEFAULT 'PENDING', attempts INT NOT NULL DEFAULT 0, next_attempt_at TIMESTAMP NULL, published_at TIMESTAMP NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, INDEX idx_outbox_pending(status, next_attempt_at));
+CREATE TABLE sys_data_scope (id BIGINT PRIMARY KEY AUTO_INCREMENT, code VARCHAR(64) UNIQUE NOT NULL, name VARCHAR(128) NOT NULL, scope_type VARCHAR(32) NOT NULL, org_unit_id BIGINT NULL, condition_expr VARCHAR(1000) NULL, status TINYINT NOT NULL DEFAULT 1);
+CREATE TABLE sys_role_data_scope (role_id BIGINT NOT NULL, data_scope_id BIGINT NOT NULL, PRIMARY KEY(role_id, data_scope_id));
+CREATE TABLE sys_user_data_scope (user_id BIGINT NOT NULL, data_scope_id BIGINT NOT NULL, PRIMARY KEY(user_id, data_scope_id));
+CREATE TABLE sys_org_unit (id BIGINT PRIMARY KEY AUTO_INCREMENT, code VARCHAR(64) UNIQUE NOT NULL, name VARCHAR(128) NOT NULL, parent_id BIGINT NULL, status TINYINT NOT NULL DEFAULT 1);
+CREATE TABLE sys_user_org (user_id BIGINT NOT NULL, org_unit_id BIGINT NOT NULL, PRIMARY KEY(user_id, org_unit_id));
+CREATE TABLE sys_audit_log_archive (id BIGINT PRIMARY KEY, event_id CHAR(36) UNIQUE, user_id BIGINT, event_type VARCHAR(64) NOT NULL, detail JSON, ip VARCHAR(64), created_at TIMESTAMP NOT NULL, archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE sys_audit_dead_letter (id BIGINT PRIMARY KEY AUTO_INCREMENT, event_id CHAR(36) UNIQUE, routing_key VARCHAR(128), payload JSON NOT NULL, status VARCHAR(16) NOT NULL DEFAULT 'PENDING', attempts INT NOT NULL DEFAULT 0, last_error VARCHAR(1000), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, replayed_at TIMESTAMP NULL);
 -- 示例账号：admin/password。生产环境必须替换为正式 BCrypt 哈希，并禁止使用默认密码。
 INSERT INTO sys_user(username,password_hash) VALUES ('admin','$2a$10$bHWjn7VJUiG1jllN3N7eX.VK.i9MwtuM0ehDTKEOcyN1j0vs475E6');
 INSERT INTO sys_role(code,name) VALUES ('SUPER_ADMIN','超级管理员'),('AUDITOR','审计员');
-INSERT INTO sys_permission(code,name,type,resource,action) VALUES ('user:read','查看用户','API','/users/**','READ'),('permission:write','修改权限','API','/permissions/**','WRITE'),('audit:read','查看审计日志','API','/audit/**','READ');
+INSERT INTO sys_permission(code,name,type,resource,action) VALUES ('user:read','查看用户','API','/users/**','READ'),('permission:write','修改权限','API','/permissions/**','WRITE'),('audit:read','查看审计日志','API','/audit/**','READ'),('audit:write','管理审计事件','API','/audit/**','WRITE'),('admin:read','查看管理端','API','/admin/**','READ'),('admin:write','修改管理端','API','/admin/**','WRITE');
 INSERT INTO sys_user_role(user_id, role_id) SELECT u.id, r.id FROM sys_user u, sys_role r WHERE u.username = 'admin' AND r.code = 'SUPER_ADMIN';
 INSERT INTO sys_role_permission(role_id, permission_id) SELECT r.id, p.id FROM sys_role r CROSS JOIN sys_permission p WHERE r.code = 'SUPER_ADMIN';

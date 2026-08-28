@@ -28,6 +28,9 @@ public class GatewayApplication {
                                       @Value("${security.internal.timestamp-skew-seconds:30}") long timestampSkew) {
         return (exchange, chain) -> {
             String path = exchange.getRequest().getURI().getPath();
+            if (path.startsWith("/auth/internal/") || path.startsWith("/permissions/internal/")) {
+                return reject(exchange, HttpStatus.NOT_FOUND);
+            }
             if (isPublic(path)) return forward(exchange, chain, internalSecret);
 
             String authorization = exchange.getRequest().getHeaders().getFirst("Authorization");
@@ -45,21 +48,28 @@ public class GatewayApplication {
                 if (required != null && (permissions == null || !permissions.contains(required))) {
                     return reject(exchange, HttpStatus.FORBIDDEN);
                 }
+                Number tokenVersion = claims.get("authVersion", Number.class);
+                if (tokenVersion == null) return reject(exchange, HttpStatus.UNAUTHORIZED);
                 return redis.hasKey("auth:black:" + claims.getId()).flatMap(blocked -> {
                     if (blocked) return reject(exchange, HttpStatus.UNAUTHORIZED);
+                    return redis.opsForValue().get("auth:user-version:" + claims.getSubject()).defaultIfEmpty("1").flatMap(version -> {
+                        if (Long.parseLong(version) != tokenVersion.longValue()) return reject(exchange, HttpStatus.UNAUTHORIZED);
                     var request = exchange.getRequest().mutate()
                             .headers(headers -> {
                                 headers.remove(SecurityContract.USER_ID_HEADER);
                                 headers.remove(SecurityContract.USERNAME_HEADER);
                                 headers.remove(SecurityContract.DEVICE_ID_HEADER);
+                                headers.remove(SecurityContract.PERMISSIONS_HEADER);
                                 headers.remove(SecurityContract.INTERNAL_TIMESTAMP_HEADER);
                                 headers.remove(SecurityContract.INTERNAL_SIGNATURE_HEADER);
                             })
                             .header(SecurityContract.USER_ID_HEADER, claims.getSubject())
                             .header(SecurityContract.USERNAME_HEADER, String.valueOf(claims.get("username")))
                             .header(SecurityContract.DEVICE_ID_HEADER, String.valueOf(claims.get("device")))
+                            .header(SecurityContract.PERMISSIONS_HEADER, String.join(",", permissions == null ? List.of() : permissions))
                             .build();
-                    return forward(exchange.mutate().request(request).build(), chain, internalSecret);
+                        return forward(exchange.mutate().request(request).build(), chain, internalSecret);
+                    });
                 });
             } catch (Exception exception) {
                 return reject(exchange, HttpStatus.UNAUTHORIZED);
@@ -80,7 +90,9 @@ public class GatewayApplication {
         String writeMethods = String.valueOf(route.getMetadata().getOrDefault("write-methods", ""));
         return Arrays.stream(writeMethods.split(","))
                 .map(String::trim)
-                .anyMatch(method::equalsIgnoreCase) ? "permission:write" : defaultPermission;
+                .anyMatch(method::equalsIgnoreCase)
+                ? String.valueOf(route.getMetadata().getOrDefault("write-permission", "permission:write"))
+                : defaultPermission;
     }
 
     private static Mono<Void> forward(ServerWebExchange exchange, org.springframework.cloud.gateway.filter.GatewayFilterChain chain,

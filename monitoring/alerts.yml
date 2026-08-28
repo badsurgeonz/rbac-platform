@@ -1,0 +1,13 @@
+groups:
+  - name: rbac-platform
+    rules:
+      - alert: RbacServiceDown
+        expr: up{job=~"gateway-service|auth-service|permission-service|audit-service|admin-api"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations: { summary: "RBAC service is unavailable" }
+      - alert: RbacGatewayAuthFailures
+        expr: increase(http_server_requests_seconds_count{job="gateway-service",status=~"401|403"}[5m]) > 100
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Gateway authentication/authorization failures increased" }

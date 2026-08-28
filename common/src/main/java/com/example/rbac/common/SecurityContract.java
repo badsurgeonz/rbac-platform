@@ -10,6 +10,7 @@ public final class SecurityContract {
     public static final String USERNAME_HEADER = "X-Username";
     public static final String DEVICE_ID_HEADER = "X-Device-Id";
     public static final String TRACE_ID_HEADER = "X-Trace-Id";
+    public static final String PERMISSIONS_HEADER = "X-User-Permissions";
     public static final String INTERNAL_TIMESTAMP_HEADER = "X-Internal-Timestamp";
     public static final String INTERNAL_SIGNATURE_HEADER = "X-Internal-Signature";
     public static final Set<Integer> AUTH_FAILURE_CODES = Set.of(401, 403);

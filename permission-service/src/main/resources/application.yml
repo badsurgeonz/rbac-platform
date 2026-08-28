@@ -33,5 +33,20 @@ spring:
     port: 5672
     username: ${RABBITMQ_USER:guest}
     password: ${RABBITMQ_PASSWORD:guest}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: auto
+        default-requeue-rejected: false
+messaging:
+  outbox:
+    poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:1000}
+    max-attempts: ${OUTBOX_MAX_ATTEMPTS:12}
+management:
+  endpoints.web.exposure.include: health,info,metrics,prometheus
+  endpoint.health.probes.enabled: true
 security.internal.secret: ${INTERNAL_REQUEST_SECRET}
 security.internal.timestamp-skew-seconds: ${INTERNAL_REQUEST_TIMESTAMP_SKEW_SECONDS:30}

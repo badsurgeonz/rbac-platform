@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RBAC 管理端</title>
+  <style>
+    :root{font:16px system-ui;color:#172033;background:#f4f6fb}body{margin:0}header{background:#172033;color:#fff;padding:1rem 2rem;display:flex;justify-content:space-between;align-items:center}main{max-width:1100px;margin:2rem auto;padding:0 1rem}.toolbar{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}button{border:0;border-radius:6px;padding:.65rem 1rem;background:#2857d9;color:#fff;cursor:pointer}button.danger{background:#bd2d45}input,select{padding:.6rem;border:1px solid #ccd2df;border-radius:6px}section{display:none;background:#fff;padding:1.25rem;border-radius:10px;box-shadow:0 6px 20px #17203312}section.active{display:block}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:.7rem;border-bottom:1px solid #e6e9f0}.muted{color:#647089}.error{color:#bd2d45}.login{max-width:420px;margin:10vh auto;background:#fff;padding:2rem;border-radius:12px;box-shadow:0 8px 30px #17203320}.login label{display:block;margin:1rem 0}.login input{width:100%;box-sizing:border-box}
+  </style>
+</head>
+<body>
+<div id="login" class="login"><h1>RBAC 管理端</h1><p class="muted">请使用管理员账号登录</p><label>用户名<input id="username" autocomplete="username"></label><label>密码<input id="password" type="password" autocomplete="current-password"></label><button onclick="login()">登录</button><p id="loginError" class="error"></p></div>
+<div id="app" hidden><header><strong>RBAC 管理端</strong><button onclick="logout()">退出</button></header><main>
+  <nav class="toolbar"><button onclick="show('users');load('users')">用户</button><button onclick="show('roles');load('roles')">角色</button><button onclick="show('permissions');load('permissions')">权限</button><button onclick="show('scopes');load('scopes')">数据权限</button><button onclick="show('audit');load('audit')">审计</button><button onclick="show('dead');load('dead')">死信</button></nav>
+  <section id="users"><h2>用户</h2><table><thead><tr><th>ID</th><th>用户名</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="usersBody"></tbody></table></section>
+  <section id="roles"><h2>角色</h2><p class="muted">角色关系由 Permission Service 管理。</p><table><thead><tr><th>ID</th><th>编码</th><th>名称</th><th>父角色</th><th>状态</th></tr></thead><tbody id="rolesBody"></tbody></table></section>
+  <section id="permissions"><h2>权限</h2><table><thead><tr><th>ID</th><th>编码</th><th>名称</th><th>资源</th><th>动作</th></tr></thead><tbody id="permissionsBody"></tbody></table></section>
+  <section id="scopes"><h2>数据权限</h2><table><thead><tr><th>ID</th><th>编码</th><th>名称</th><th>类型</th><th>组织节点</th></tr></thead><tbody id="scopesBody"></tbody></table></section>
+  <section id="audit"><h2>审计日志</h2><div class="toolbar"><input id="auditUser" placeholder="用户 ID"><input id="auditType" placeholder="事件类型"><button onclick="load('audit')">查询</button></div><table><thead><tr><th>时间</th><th>用户</th><th>事件</th><th>事件 ID</th><th>详情</th></tr></thead><tbody id="auditBody"></tbody></table></section>
+  <section id="dead"><h2>审计死信</h2><table><thead><tr><th>ID</th><th>事件 ID</th><th>状态</th><th>错误</th><th>操作</th></tr></thead><tbody id="deadBody"></tbody></table></section>
+  <p id="error" class="error"></p>
+</main></div>
+<script>
+const api='/admin'; const $=id=>document.getElementById(id); const token=()=>localStorage.getItem('accessToken');
+async function login(){try{const r=await fetch('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('username').value,password:$('password').value})});const b=await r.json();if(!b.data?.accessToken)throw Error(b.message||'登录失败');localStorage.setItem('accessToken',b.data.accessToken);$('login').hidden=true;$('app').hidden=false;show('users');load('users')}catch(e){$('loginError').textContent=e.message}}
+function logout(){localStorage.removeItem('accessToken');location.reload()}
+function show(id){document.querySelectorAll('section').forEach(s=>s.classList.toggle('active',s.id===id))}
+async function request(path,options={}){options.headers={...(options.headers||{}),Authorization:'Bearer '+token(),'Content-Type':'application/json'};const r=await fetch(api+path,options);const b=await r.json();if(!r.ok||b.code&&b.code!==0)throw Error(b.message||'请求失败');return b.data}
+async function load(kind){try{$('error').textContent='';if(kind==='users'){const d=await request('/users');$('usersBody').innerHTML=(d||[]).map(u=>`<tr><td>${u.id}</td><td>${u.username}</td><td>${u.status?'启用':'停用'}</td><td>${u.createdAt||''}</td><td><button class="danger" onclick="changeStatus(${u.id},${u.status?0:1})">${u.status?'禁用':'启用'}</button><button onclick="revoke(${u.id})">撤销会话</button></td></tr>`).join('')}if(kind==='roles'){const d=await request('/roles');$('rolesBody').innerHTML=(d||[]).map(x=>`<tr><td>${x.id}</td><td>${x.code}</td><td>${x.name}</td><td>${x.parentId||'-'}</td><td>${x.status?'启用':'停用'}</td></tr>`).join('')}if(kind==='permissions'){const d=await request('/permissions');$('permissionsBody').innerHTML=(d||[]).map(x=>`<tr><td>${x.id}</td><td>${x.code}</td><td>${x.name}</td><td>${x.resource||''}</td><td>${x.action||''}</td></tr>`).join('')}if(kind==='scopes'){const d=await request('/data-scopes');$('scopesBody').innerHTML=(d||[]).map(x=>`<tr><td>${x.id}</td><td>${x.code}</td><td>${x.name}</td><td>${x.scopeType}</td><td>${x.orgUnitId||'-'}</td></tr>`).join('')}if(kind==='audit'){const q=new URLSearchParams();if($('auditUser').value)q.set('userId',$('auditUser').value);if($('auditType').value)q.set('eventType',$('auditType').value);const d=await request('/audit/logs?'+q);$('auditBody').innerHTML=(d||[]).map(x=>`<tr><td>${x.createdAt}</td><td>${x.userId||'-'}</td><td>${x.eventType}</td><td>${x.eventId}</td><td><code>${escapeHtml(x.detail||'')}</code></td></tr>`).join('')}if(kind==='dead'){const d=await request('/audit/dead-letters');$('deadBody').innerHTML=(d||[]).map(x=>`<tr><td>${x.id}</td><td>${x.eventId}</td><td>${x.status}</td><td>${escapeHtml(x.lastError||'')}</td><td>${x.status==='PENDING'?`<button onclick="replay(${x.id})">重放</button>`:'-'}</td></tr>`).join('')}}catch(e){$('error').textContent=e.message}}
+async function changeStatus(id,status){if(!confirm('确认修改用户状态？'))return;await request('/users/'+id+'/status?status='+status,{method:'PUT'});load('users')}
+async function revoke(id){if(!confirm('确认撤销该用户全部会话？'))return;await request('/sessions/'+id,{method:'DELETE'});alert('会话已撤销')}
+async function replay(id){if(!confirm('确认重放该死信事件？'))return;await request('/audit/dead-letters/'+id+'/replay',{method:'POST'});load('dead')}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+if(token()){$('login').hidden=true;$('app').hidden=false;show('users');load('users')}
+</script></body></html>

@@ -36,3 +36,6 @@ security.jwt.audience: ${JWT_AUDIENCE:rbac-api}
 security.jwt.refresh-seconds: ${JWT_REFRESH_SECONDS:604800}
 security.internal.secret: ${INTERNAL_REQUEST_SECRET}
 security.internal.timestamp-skew-seconds: ${INTERNAL_REQUEST_TIMESTAMP_SKEW_SECONDS:30}
+management:
+  endpoints.web.exposure.include: health,info,metrics,prometheus
+  endpoint.health.probes.enabled: true

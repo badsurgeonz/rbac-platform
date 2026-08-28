@@ -1,5 +1,9 @@
 name: RBAC Platform CI
 
+concurrency:
+  group: rbac-platform-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
@@ -18,7 +22,16 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
+      - name: Validate repository diff
+        run: git diff --check
       - name: Validate Compose file
         run: docker compose config
-      - name: Run Maven tests
-        run: mvn -B clean test
+      - name: Run unified Maven gate
+        run: mvn -B clean verify
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: '**/target/surefire-reports/**'
+          if-no-files-found: warn
