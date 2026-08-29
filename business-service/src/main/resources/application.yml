@@ -1,0 +1,30 @@
+server:
+  port: 9005
+spring:
+  application.name: business-service
+  config:
+    import: "optional:nacos:application.yml?group=DEFAULT_GROUP&refreshEnabled=true,optional:nacos:business-service.yml?group=DEFAULT_GROUP&refreshEnabled=true"
+  cloud.nacos:
+    discovery:
+      server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+      group: ${NACOS_GROUP:DEFAULT_GROUP}
+      namespace: ${NACOS_NAMESPACE:}
+      ephemeral: false
+    config:
+      server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+      group: ${NACOS_GROUP:DEFAULT_GROUP}
+      namespace: ${NACOS_NAMESPACE:}
+      file-extension: yaml
+      refresh-enabled: true
+  datasource:
+    url: "jdbc:mysql://${MYSQL_HOST:localhost}:3306/rbac?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8"
+    username: ${MYSQL_USER:rbac}
+    password: ${MYSQL_PASSWORD:rbac123}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  flyway:
+    table: business_flyway_schema_history
+security.internal.secret: ${INTERNAL_REQUEST_SECRET}
+security.internal.timestamp-skew-seconds: ${INTERNAL_REQUEST_TIMESTAMP_SKEW_SECONDS:30}
+management:
+  endpoints.web.exposure.include: health,info,metrics,prometheus
+  endpoint.health.probes.enabled: true

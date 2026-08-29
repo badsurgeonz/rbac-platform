@@ -13,8 +13,10 @@ public class AdminController {
     public JsonNode users() { return backend.get("auth-service", "/auth/internal/users"); }
 
     @PutMapping("/users/{userId}/status")
-    public JsonNode changeStatus(@PathVariable Long userId, @RequestParam int status) {
-        return backend.put("auth-service", "/auth/internal/users/" + userId + "/status", java.util.Map.of("status", status));
+    public JsonNode changeStatus(@PathVariable Long userId, @RequestParam int status,
+                                 @RequestHeader("X-User-Id") Long operatorId,
+                                 @RequestHeader("X-Step-Up-Token") String stepUpToken) {
+        return backend.putAsOperator("auth-service", "/auth/internal/users/" + userId + "/status", java.util.Map.of("status", status, "stepUpToken", stepUpToken), operatorId, stepUpToken);
     }
 
     @GetMapping("/roles")
@@ -64,8 +66,9 @@ public class AdminController {
     public JsonNode replayDeadLetter(@PathVariable Long id) { return backend.post("audit-service", "/audit/dead-letters/" + id + "/replay", null); }
 
     @DeleteMapping("/sessions/{userId}")
-    public JsonNode revokeSessions(@PathVariable Long userId) {
-        return backend.delete("auth-service", "/auth/internal/users/" + userId + "/sessions");
+    public JsonNode revokeSessions(@PathVariable Long userId, @RequestHeader("X-User-Id") Long operatorId,
+                                   @RequestHeader("X-Step-Up-Token") String stepUpToken) {
+        return backend.deleteAsOperator("auth-service", "/auth/internal/users/" + userId + "/sessions", operatorId, stepUpToken);
     }
 
     @GetMapping("/outbox")

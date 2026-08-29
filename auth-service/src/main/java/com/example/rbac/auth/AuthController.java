@@ -162,6 +162,18 @@ public class AuthController {
         return ApiResponse.ok(null);
     }
 
+    @PostMapping("/step-up")
+    public ApiResponse<Map<String, String>> stepUp(@RequestHeader("X-User-Id") Long userId,
+                                                   @Valid @RequestBody StepUpRequest request) {
+        UserAccount user = findById(userId);
+        if (user == null || user.status() != 1 || !passwordEncoder.matches(request.password(), user.passwordHash())) {
+            return ApiResponse.fail(401, "身份确认失败");
+        }
+        String token = UUID.randomUUID().toString();
+        redis.opsForValue().set("auth:step-up:" + userId + ":" + token, "1", Duration.ofMinutes(5));
+        return ApiResponse.ok(Map.of("stepUpToken", token, "expiresIn", "300"));
+    }
+
     @GetMapping("/internal/users")
     public ApiResponse<List<UserView>> internalUsers() {
         return ApiResponse.ok(jdbc.query("SELECT id, username, status, created_at FROM sys_user ORDER BY id DESC LIMIT 200",
@@ -169,7 +181,10 @@ public class AuthController {
     }
 
     @PutMapping("/internal/users/{userId}/status")
-    public ApiResponse<Void> internalStatus(@PathVariable Long userId, @RequestBody StatusRequest request) {
+    public ApiResponse<Void> internalStatus(@PathVariable Long userId,
+                                            @RequestHeader("X-User-Id") Long operatorId,
+                                            @RequestBody StatusRequest request) {
+        requireStepUp(operatorId, request.stepUpToken());
         if (request.status() != 0 && request.status() != 1) throw new IllegalArgumentException("用户状态必须为 0 或 1");
         if (jdbc.update("UPDATE sys_user SET status = ? WHERE id = ?", request.status(), userId) == 0) throw new IllegalArgumentException("用户不存在");
         revokeUserSessions(userId);
@@ -177,7 +192,10 @@ public class AuthController {
     }
 
     @DeleteMapping("/internal/users/{userId}/sessions")
-    public ApiResponse<Void> internalRevokeSessions(@PathVariable Long userId) {
+    public ApiResponse<Void> internalRevokeSessions(@PathVariable Long userId,
+                                                    @RequestHeader("X-User-Id") Long operatorId,
+                                                    @RequestHeader("X-Step-Up-Token") String stepUpToken) {
+        requireStepUp(operatorId, stepUpToken);
         revokeUserSessions(userId);
         return ApiResponse.ok(null);
     }
@@ -192,10 +210,18 @@ public class AuthController {
         redis.opsForValue().increment("auth:user-version:" + userId);
     }
 
+    private void requireStepUp(Long userId, String token) {
+        if (token == null || !Boolean.TRUE.equals(redis.hasKey("auth:step-up:" + userId + ":" + token))) {
+            throw new org.springframework.security.access.AccessDeniedException("需要二次身份确认");
+        }
+        redis.delete("auth:step-up:" + userId + ":" + token);
+    }
+
     record UserAccount(Long id, String username, String passwordHash, int status) {}
     public record LoginRequest(@NotBlank String username, @NotBlank String password) {}
     public record RefreshRequest(@NotBlank String refreshToken) {}
     public record ChangePasswordRequest(@NotBlank String currentPassword, @NotBlank String newPassword) {}
-    public record StatusRequest(int status) {}
+    public record StatusRequest(int status, String stepUpToken) {}
+    public record StepUpRequest(@NotBlank String password) {}
     public record UserView(Long id, String username, int status, java.time.Instant createdAt) {}
 }

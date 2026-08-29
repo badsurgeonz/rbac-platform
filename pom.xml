@@ -8,7 +8,7 @@
     <groupId>com.example.rbac</groupId><artifactId>rbac-platform</artifactId><version>1.0.0</version>
     <packaging>pom</packaging>
     <properties><java.version>17</java.version><spring-cloud.version>2024.0.0</spring-cloud.version><spring-cloud-alibaba.version>2023.0.3.2</spring-cloud-alibaba.version><testcontainers.version>1.20.4</testcontainers.version></properties>
-    <modules><module>common</module><module>auth-service</module><module>permission-service</module><module>gateway-service</module><module>audit-service</module><module>admin-api</module></modules>
+    <modules><module>common</module><module>auth-service</module><module>permission-service</module><module>gateway-service</module><module>audit-service</module><module>admin-api</module><module>business-service</module></modules>
     <dependencyManagement><dependencies>
         <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-dependencies</artifactId><version>${spring-cloud.version}</version><type>pom</type><scope>import</scope></dependency>
         <dependency><groupId>org.testcontainers</groupId><artifactId>testcontainers-bom</artifactId><version>${testcontainers.version}</version><type>pom</type><scope>import</scope></dependency>

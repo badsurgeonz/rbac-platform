@@ -18,6 +18,6 @@ CREATE TABLE sys_audit_dead_letter (id BIGINT PRIMARY KEY AUTO_INCREMENT, event_
 -- 示例账号：admin/password。生产环境必须替换为正式 BCrypt 哈希，并禁止使用默认密码。
 INSERT INTO sys_user(username,password_hash) VALUES ('admin','$2a$10$bHWjn7VJUiG1jllN3N7eX.VK.i9MwtuM0ehDTKEOcyN1j0vs475E6');
 INSERT INTO sys_role(code,name) VALUES ('SUPER_ADMIN','超级管理员'),('AUDITOR','审计员');
-INSERT INTO sys_permission(code,name,type,resource,action) VALUES ('user:read','查看用户','API','/users/**','READ'),('permission:write','修改权限','API','/permissions/**','WRITE'),('audit:read','查看审计日志','API','/audit/**','READ'),('audit:write','管理审计事件','API','/audit/**','WRITE'),('admin:read','查看管理端','API','/admin/**','READ'),('admin:write','修改管理端','API','/admin/**','WRITE');
+INSERT INTO sys_permission(code,name,type,resource,action) VALUES ('user:read','查看用户','API','/users/**','READ'),('permission:write','修改权限','API','/permissions/**','WRITE'),('audit:read','查看审计日志','API','/audit/**','READ'),('audit:write','管理审计事件','API','/audit/**','WRITE'),('admin:read','查看管理端','API','/admin/**','READ'),('admin:write','修改管理端','API','/admin/**','WRITE'),('business:read','查看业务数据','API','/business/**','READ');
 INSERT INTO sys_user_role(user_id, role_id) SELECT u.id, r.id FROM sys_user u, sys_role r WHERE u.username = 'admin' AND r.code = 'SUPER_ADMIN';
 INSERT INTO sys_role_permission(role_id, permission_id) SELECT r.id, p.id FROM sys_role r CROSS JOIN sys_permission p WHERE r.code = 'SUPER_ADMIN';

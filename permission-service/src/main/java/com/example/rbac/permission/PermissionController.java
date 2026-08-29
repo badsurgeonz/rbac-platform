@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import java.util.HashSet;
 
 @RestController
 @RequestMapping("/permissions")
@@ -146,6 +147,37 @@ public class PermissionController {
                 """, (rs, rowNum) -> new ScopeRule(rs.getString("scope_type"), (Long) rs.getObject("org_unit_id")), currentUserId, currentUserId)
                 .stream().anyMatch(rule -> matches(rule, currentUserId, request));
         return ApiResponse.ok(new DataScopeDecision(allowed, currentUserId, request.resource(), request.action()));
+    }
+
+    @GetMapping("/internal/users/{userId}/data-scope-policy")
+    public ApiResponse<DataScopePolicy> dataScopePolicy(@PathVariable Long userId) {
+        ensureUserExists(userId);
+        boolean allAllowed = false;
+        boolean selfAllowed = false;
+        Set<Long> orgUnitIds = new HashSet<>();
+        List<ScopeRule> rules = jdbc.query("""
+                WITH RECURSIVE role_tree AS (
+                    SELECT r.id, r.parent_id FROM sys_role r JOIN sys_user_role ur ON ur.role_id = r.id WHERE ur.user_id = ?
+                    UNION ALL
+                    SELECT parent.id, parent.parent_id FROM sys_role parent JOIN role_tree child ON child.parent_id = parent.id
+                )
+                SELECT DISTINCT ds.scope_type, ds.org_unit_id
+                FROM sys_data_scope ds
+                LEFT JOIN sys_user_data_scope uds ON uds.data_scope_id = ds.id AND uds.user_id = ?
+                LEFT JOIN sys_role_data_scope rds ON rds.data_scope_id = ds.id
+                WHERE ds.status = 1 AND (uds.user_id IS NOT NULL OR rds.role_id IN (SELECT id FROM role_tree))
+                """, (rs, rowNum) -> new ScopeRule(rs.getString("scope_type"), (Long) rs.getObject("org_unit_id")), userId, userId);
+        for (ScopeRule rule : rules) {
+            DataScopeType type = DataScopeType.parse(rule.scopeType());
+            if (type == DataScopeType.ALL) allAllowed = true;
+            if (type == DataScopeType.SELF) selfAllowed = true;
+            if ((type == DataScopeType.DEPARTMENT || type == DataScopeType.DEPARTMENT_AND_DESCENDANTS)
+                    && rule.orgUnitId() != null && userBelongsToOrg(userId, rule.orgUnitId())) {
+                if (type == DataScopeType.DEPARTMENT) orgUnitIds.add(rule.orgUnitId());
+                else orgUnitIds.addAll(descendantOrgUnits(rule.orgUnitId()));
+            }
+        }
+        return ApiResponse.ok(new DataScopePolicy(allAllowed, selfAllowed, orgUnitIds));
     }
 
     @PostMapping("/org-units")
@@ -331,6 +363,13 @@ public class PermissionController {
                 """, Integer.class, ancestor, candidate);
         return count != null && count > 0;
     }
+    private Set<Long> descendantOrgUnits(Long ancestor) {
+        return new HashSet<>(jdbc.queryForList("""
+                WITH RECURSIVE org_tree AS (SELECT id, parent_id FROM sys_org_unit WHERE id = ?
+                    UNION ALL SELECT child.id, child.parent_id FROM sys_org_unit child JOIN org_tree parent ON child.parent_id = parent.id)
+                SELECT id FROM org_tree
+                """, Long.class, ancestor));
+    }
     private void ensureOrgUnitExists(Long id) {
         if (jdbc.queryForObject("SELECT COUNT(*) FROM sys_org_unit WHERE id = ? AND status = 1", Integer.class, id) == 0) {
             throw new IllegalArgumentException("组织节点不存在: " + id);
@@ -349,5 +388,6 @@ public class PermissionController {
     public record OrgUnitView(Long id, String code, String name, Long parentId, int status) {}
     public record DataScopeCheckRequest(@NotBlank String resource, @NotBlank String action, Long ownerUserId, Long orgUnitId) {}
     public record DataScopeDecision(boolean allowed, Long userId, String resource, String action) {}
+    public record DataScopePolicy(boolean allAllowed, boolean selfAllowed, Set<Long> allowedOrgUnitIds) {}
     private record ScopeRule(String scopeType, Long orgUnitId) {}
 }

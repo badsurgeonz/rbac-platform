@@ -43,6 +43,11 @@ spring:
             required-permission: admin:read
             write-methods: PUT,POST,DELETE
             write-permission: admin:write
+        - id: business
+          uri: lb://business-service
+          predicates: [ Path=/business/** ]
+          metadata:
+            required-permission: business:read
 security.jwt.issuer: ${JWT_ISSUER:rbac-platform}
 security.jwt.audience: ${JWT_AUDIENCE:rbac-api}
 security.jwt.secret: ${JWT_SECRET}

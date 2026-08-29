@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 import java.util.List;
+import java.util.Map;
 
 @Component
 public class AdminBackendClient {
@@ -30,8 +31,18 @@ public class AdminBackendClient {
     public JsonNode put(String service, String path, Object body) { return request(service, HttpMethod.PUT, path, body); }
     public JsonNode post(String service, String path, Object body) { return request(service, HttpMethod.POST, path, body); }
     public JsonNode delete(String service, String path) { return request(service, HttpMethod.DELETE, path, null); }
+    public JsonNode putAsOperator(String service, String path, Object body, Long operatorId, String stepUpToken) {
+        return request(service, HttpMethod.PUT, path, body, Map.of(SecurityContract.USER_ID_HEADER, String.valueOf(operatorId), SecurityContract.STEP_UP_TOKEN_HEADER, stepUpToken));
+    }
+    public JsonNode deleteAsOperator(String service, String path, Long operatorId, String stepUpToken) {
+        return request(service, HttpMethod.DELETE, path, null, Map.of(SecurityContract.USER_ID_HEADER, String.valueOf(operatorId), SecurityContract.STEP_UP_TOKEN_HEADER, stepUpToken));
+    }
 
     private JsonNode request(String service, HttpMethod method, String path, Object body) {
+        return request(service, method, path, body, Map.of());
+    }
+
+    private JsonNode request(String service, HttpMethod method, String path, Object body, Map<String, String> extraHeaders) {
         List<ServiceInstance> instances = discoveryClient.getInstances(service);
         if (instances.isEmpty()) throw new IllegalStateException(service + " is unavailable");
         long timestamp = System.currentTimeMillis() / 1000;
@@ -39,6 +50,7 @@ public class AdminBackendClient {
         var request = RestClient.create(instances.get(0).getUri()).method(method).uri(path)
                 .header(SecurityContract.INTERNAL_TIMESTAMP_HEADER, String.valueOf(timestamp))
                 .header(SecurityContract.INTERNAL_SIGNATURE_HEADER, InternalRequestSigner.sign(secret, method.name(), signaturePath, timestamp));
+        extraHeaders.forEach(request::header);
         if (body != null) request.body(body);
         return request.retrieve().body(JsonNode.class);
     }
