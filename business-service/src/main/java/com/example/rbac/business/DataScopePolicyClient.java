@@ -32,5 +32,5 @@ public class DataScopePolicyClient {
         if (response == null || response.data() == null || response.code() != 0) throw new IllegalStateException("invalid data scope policy");
         return response.data();
     }
-    public record Policy(boolean allAllowed, boolean selfAllowed, Set<Long> allowedOrgUnitIds) {}
+    public record Policy(boolean allAllowed, boolean selfAllowed, Set<Long> allowedOrgUnitIds, Set<String> allowedTenants) {}
 }

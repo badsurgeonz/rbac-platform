@@ -133,28 +133,21 @@ public class PermissionController {
     @PostMapping("/data-scope/check")
     public ApiResponse<DataScopeDecision> checkDataScope(@RequestHeader("X-User-Id") Long currentUserId,
                                                          @RequestBody DataScopeCheckRequest request) {
-        boolean allowed = jdbc.query("""
-                WITH RECURSIVE role_tree AS (
-                    SELECT r.id, r.parent_id FROM sys_role r JOIN sys_user_role ur ON ur.role_id = r.id WHERE ur.user_id = ?
-                    UNION ALL
-                    SELECT parent.id, parent.parent_id FROM sys_role parent JOIN role_tree child ON child.parent_id = parent.id
-                )
-                SELECT DISTINCT ds.scope_type, ds.org_unit_id
-                FROM sys_data_scope ds
-                LEFT JOIN sys_user_data_scope uds ON uds.data_scope_id = ds.id AND uds.user_id = ?
-                LEFT JOIN sys_role_data_scope rds ON rds.data_scope_id = ds.id
-                WHERE ds.status = 1 AND (uds.user_id IS NOT NULL OR rds.role_id IN (SELECT id FROM role_tree))
-                """, (rs, rowNum) -> new ScopeRule(rs.getString("scope_type"), (Long) rs.getObject("org_unit_id")), currentUserId, currentUserId)
-                .stream().anyMatch(rule -> matches(rule, currentUserId, request));
+        DataScopePolicy policy = resolveDataScopePolicy(currentUserId);
+        boolean allowed = policy.allAllowed()
+                || (request.ownerUserId() != null && policy.selfAllowed() && currentUserId.equals(request.ownerUserId()))
+                || (request.orgUnitId() != null && policy.allowedOrgUnitIds().contains(request.orgUnitId()))
+                || (request.tenantId() != null && policy.allowedTenants().contains(request.tenantId()));
         return ApiResponse.ok(new DataScopeDecision(allowed, currentUserId, request.resource(), request.action()));
     }
 
     @GetMapping("/internal/users/{userId}/data-scope-policy")
     public ApiResponse<DataScopePolicy> dataScopePolicy(@PathVariable Long userId) {
         ensureUserExists(userId);
-        boolean allAllowed = false;
-        boolean selfAllowed = false;
-        Set<Long> orgUnitIds = new HashSet<>();
+        return ApiResponse.ok(resolveDataScopePolicy(userId));
+    }
+
+    DataScopePolicy resolveDataScopePolicy(Long userId) {
         List<ScopeRule> rules = jdbc.query("""
                 WITH RECURSIVE role_tree AS (
                     SELECT r.id, r.parent_id FROM sys_role r JOIN sys_user_role ur ON ur.role_id = r.id WHERE ur.user_id = ?
@@ -167,31 +160,40 @@ public class PermissionController {
                 LEFT JOIN sys_role_data_scope rds ON rds.data_scope_id = ds.id
                 WHERE ds.status = 1 AND (uds.user_id IS NOT NULL OR rds.role_id IN (SELECT id FROM role_tree))
                 """, (rs, rowNum) -> new ScopeRule(rs.getString("scope_type"), (Long) rs.getObject("org_unit_id")), userId, userId);
+        return resolvePolicy(userId, rules, orgUnitIdsOf(userId), tenantIdsOf(userId), this::descendantOrgUnits);
+    }
+
+    static DataScopePolicy resolvePolicy(Long userId, List<ScopeRule> rules, Set<Long> userOrgIds, Set<String> userTenantIds,
+                                         java.util.function.Function<Long, Set<Long>> descendantResolver) {
+        boolean allAllowed = false;
+        boolean selfAllowed = false;
+        Set<Long> orgUnitIds = new HashSet<>();
         for (ScopeRule rule : rules) {
             DataScopeType type = DataScopeType.parse(rule.scopeType());
             if (type == DataScopeType.ALL) allAllowed = true;
             if (type == DataScopeType.SELF) selfAllowed = true;
             if ((type == DataScopeType.DEPARTMENT || type == DataScopeType.DEPARTMENT_AND_DESCENDANTS)
-                    && rule.orgUnitId() != null && userBelongsToOrg(userId, rule.orgUnitId())) {
+                    && rule.orgUnitId() != null && userOrgIds.contains(rule.orgUnitId())) {
                 if (type == DataScopeType.DEPARTMENT) orgUnitIds.add(rule.orgUnitId());
-                else orgUnitIds.addAll(descendantOrgUnits(rule.orgUnitId()));
+                else orgUnitIds.addAll(descendantResolver.apply(rule.orgUnitId()));
             }
         }
-        return ApiResponse.ok(new DataScopePolicy(allAllowed, selfAllowed, orgUnitIds));
+        Set<String> allowedTenants = allAllowed ? Set.of() : Set.copyOf(userTenantIds);
+        return new DataScopePolicy(allAllowed, selfAllowed, orgUnitIds, allowedTenants);
     }
 
     @PostMapping("/org-units")
     public ApiResponse<Long> createOrgUnit(@Valid @RequestBody CreateOrgUnitRequest request) {
         if (request.parentId() != null) ensureOrgUnitExists(request.parentId());
-        jdbc.update("INSERT INTO sys_org_unit(code, name, parent_id) VALUES (?, ?, ?)", request.code(), request.name(), request.parentId());
+        jdbc.update("INSERT INTO sys_org_unit(code, name, parent_id, tenant_id) VALUES (?, ?, ?, ?)", request.code(), request.name(), request.parentId(), request.tenantId());
         return ApiResponse.ok(jdbc.queryForObject("SELECT id FROM sys_org_unit WHERE code = ?", Long.class, request.code()));
     }
 
     @GetMapping("/org-units")
     public ApiResponse<List<OrgUnitView>> allOrgUnits() {
-        return ApiResponse.ok(jdbc.query("SELECT id, code, name, parent_id, status FROM sys_org_unit WHERE status = 1 ORDER BY id",
+        return ApiResponse.ok(jdbc.query("SELECT id, code, name, parent_id, tenant_id, status FROM sys_org_unit WHERE status = 1 ORDER BY id",
                 (rs, rowNum) -> new OrgUnitView(rs.getLong("id"), rs.getString("code"), rs.getString("name"),
-                        (Long) rs.getObject("parent_id"), rs.getInt("status"))));
+                        (Long) rs.getObject("parent_id"), rs.getString("tenant_id"), rs.getInt("status"))));
     }
 
     @PutMapping("/users/{userId}/org-units")
@@ -342,26 +344,17 @@ public class PermissionController {
     private boolean hasPermission(String permissions, String required) {
         return Set.of(permissions.split(",")).contains(required);
     }
-    private boolean matches(ScopeRule rule, Long currentUserId, DataScopeCheckRequest request) {
-        DataScopeType type = DataScopeType.parse(rule.scopeType());
-        if (type == DataScopeType.ALL) return true;
-        if (type == DataScopeType.SELF) return request.ownerUserId() != null && currentUserId.equals(request.ownerUserId());
-        if (type == DataScopeType.DEPARTMENT) return rule.orgUnitId() != null && request.orgUnitId() != null
-                && userBelongsToOrg(currentUserId, rule.orgUnitId()) && rule.orgUnitId().equals(request.orgUnitId());
-        if (type == DataScopeType.DEPARTMENT_AND_DESCENDANTS) return rule.orgUnitId() != null && request.orgUnitId() != null
-                && userBelongsToOrg(currentUserId, rule.orgUnitId()) && isOrgDescendant(request.orgUnitId(), rule.orgUnitId());
-        return false;
-    }
     private boolean userBelongsToOrg(Long userId, Long orgUnitId) {
         return jdbc.queryForObject("SELECT COUNT(*) FROM sys_user_org WHERE user_id = ? AND org_unit_id = ?", Integer.class, userId, orgUnitId) > 0;
     }
-    private boolean isOrgDescendant(Long candidate, Long ancestor) {
-        Integer count = jdbc.queryForObject("""
-                WITH RECURSIVE org_tree AS (SELECT id, parent_id FROM sys_org_unit WHERE id = ?
-                    UNION ALL SELECT child.id, child.parent_id FROM sys_org_unit child JOIN org_tree parent ON child.parent_id = parent.id)
-                SELECT COUNT(*) FROM org_tree WHERE id = ?
-                """, Integer.class, ancestor, candidate);
-        return count != null && count > 0;
+    private Set<Long> orgUnitIdsOf(Long userId) {
+        return new HashSet<>(jdbc.queryForList("SELECT org_unit_id FROM sys_user_org WHERE user_id = ?", Long.class, userId));
+    }
+    private Set<String> tenantIdsOf(Long userId) {
+        return new HashSet<>(jdbc.queryForList("""
+                SELECT DISTINCT ou.tenant_id FROM sys_org_unit ou JOIN sys_user_org uo ON uo.org_unit_id = ou.id
+                WHERE uo.user_id = ? AND ou.tenant_id IS NOT NULL AND ou.status = 1
+                """, String.class, userId));
     }
     private Set<Long> descendantOrgUnits(Long ancestor) {
         return new HashSet<>(jdbc.queryForList("""
@@ -384,10 +377,10 @@ public class PermissionController {
     public record DataScopeView(Long id, String code, String name, String scopeType, Long orgUnitId, String conditionExpr) {}
     public record CreateDataScopeRequest(@NotBlank String code, @NotBlank String name, @NotBlank String scopeType,
                                          Long orgUnitId, String conditionExpr) {}
-    public record CreateOrgUnitRequest(@NotBlank String code, @NotBlank String name, Long parentId) {}
-    public record OrgUnitView(Long id, String code, String name, Long parentId, int status) {}
-    public record DataScopeCheckRequest(@NotBlank String resource, @NotBlank String action, Long ownerUserId, Long orgUnitId) {}
+    public record CreateOrgUnitRequest(@NotBlank String code, @NotBlank String name, Long parentId, String tenantId) {}
+    public record OrgUnitView(Long id, String code, String name, Long parentId, String tenantId, int status) {}
+    public record DataScopeCheckRequest(@NotBlank String resource, @NotBlank String action, Long ownerUserId, Long orgUnitId, String tenantId) {}
     public record DataScopeDecision(boolean allowed, Long userId, String resource, String action) {}
-    public record DataScopePolicy(boolean allAllowed, boolean selfAllowed, Set<Long> allowedOrgUnitIds) {}
-    private record ScopeRule(String scopeType, Long orgUnitId) {}
+    public record DataScopePolicy(boolean allAllowed, boolean selfAllowed, Set<Long> allowedOrgUnitIds, Set<String> allowedTenants) {}
+    record ScopeRule(String scopeType, Long orgUnitId) {}
 }
